@@ -1,4 +1,4 @@
 streamlit
 plotly
 pandas
-streamlit-local-storage2
+streamlit-local-storage
