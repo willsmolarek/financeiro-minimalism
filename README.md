@@ -19,9 +19,3 @@ Aplicação web minimalista para gerenciamento de finanças pessoais e simulaç�
 - Plotly
 - Streamlit LocalStorage
 
-## Como Executar o Projeto
-
-1. Clone o repositório:
-```bash
-git clone [https://github.com/seu-usuario/nome-do-repositorio.git](https://github.com/seu-usuario/nome-do-repositorio.git)
-cd nome-do-repositorio
