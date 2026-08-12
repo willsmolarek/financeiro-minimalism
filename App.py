@@ -159,19 +159,22 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ----------------------------------------------------------------------------
 # PERSISTÊNCIA DE DADOS (LOCALSTORAGE / NAVEGADOR)
 # ----------------------------------------------------------------------------
+colunas = ["Data", "Tipo", "Descrição", "Valor"]
+
 def carregar_dados() -> pd.DataFrame:
-    colunas = ["Data", "Tipo", "Descrição", "Valor"]
     raw_data = local_store.getItem("transacoes_locais")
     
     if raw_data:
         try:
-            df = pd.DataFrame(json.loads(raw_data))
-            df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-            df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
-            for c in colunas:
-                if c not in df.columns:
-                    df[c] = None
-            return df[colunas]
+            dados = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+            df = pd.DataFrame(dados)
+            if not df.empty:
+                df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+                df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+                for c in colunas:
+                    if c not in df.columns:
+                        df[c] = None
+                return df[colunas]
         except Exception:
             pass
 
@@ -185,7 +188,9 @@ def salvar_dados(df: pd.DataFrame) -> None:
     df_salvar = df.copy()
     if not df_salvar.empty:
         df_salvar["Data"] = pd.to_datetime(df_salvar["Data"]).dt.strftime("%Y-%m-%d")
-    local_store.setItem("transacoes_locais", json.dumps(df_salvar.to_dict(orient="records")))
+        local_store.setItem("transacoes_locais", json.dumps(df_salvar.to_dict(orient="records")))
+    else:
+        local_store.setItem("transacoes_locais", json.dumps([]))
 
 
 if "transacoes" not in st.session_state:
@@ -227,7 +232,7 @@ with st.sidebar:
 
     if not st.session_state.transacoes.empty:
         if st.button("Limpar todo o histórico", use_container_width=True):
-            df_vazio = pd.DataFrame(columns=["Data", "Tipo", "Descrição", "Valor"])
+            df_vazio = pd.DataFrame(columns=colunas)
             df_vazio["Data"] = pd.to_datetime(df_vazio["Data"])
             st.session_state.transacoes = df_vazio
             salvar_dados(df_vazio)
@@ -269,11 +274,14 @@ if not df.empty:
 else:
     df_kpi = df
 
-total_receitas = df_kpi.loc[df_kpi["Tipo"] == "Receita", "Valor"].sum()
-total_despesas = df_kpi.loc[df_kpi["Tipo"] == "Despesa", "Valor"].sum()
+total_receitas = df_kpi.loc[df_kpi["Tipo"] == "Receita", "Valor"].sum() if not df_kpi.empty else 0.0
+total_despesas = df_kpi.loc[df_kpi["Tipo"] == "Despesa", "Valor"].sum() if not df_kpi.empty else 0.0
 saldo_periodo = total_receitas - total_despesas
 
-saldo_total_historico = df.loc[df["Tipo"] == "Receita", "Valor"].sum() - df.loc[df["Tipo"] == "Despesa", "Valor"].sum()
+saldo_total_historico = (
+    df.loc[df["Tipo"] == "Receita", "Valor"].sum() - df.loc[df["Tipo"] == "Despesa", "Valor"].sum()
+    if not df.empty else 0.0
+)
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Total de Recebimentos", f"R$ {total_receitas:,.2f}")
@@ -369,7 +377,7 @@ with col_b:
             x=anos_eixo,
             y=valores_anuais,
             mode="lines",
-            line=dict(color=COR_LINHA, width=3),
+            line={"color": COR_LINHA, "width": 3},
             fill="tozeroy",
             fillcolor="rgba(55, 71, 79, 0.08)",
             hovertemplate="Ano %{x}<br>Patrimônio: R$ %{y:,.2f}<extra></extra>",
@@ -379,20 +387,23 @@ with col_b:
     fig.update_layout(
         autosize=True,
         height=380,
-        margin=dict(l=10, r=10, t=10, b=10),
+        margin={"l": 10, "r": 10, "t": 10, "b": 10},
         plot_bgcolor="#FFFFFF",
         paper_bgcolor="#FFFFFF",
-        xaxis=dict(title="Anos", showgrid=False, zeroline=False, color="#444444"),
-        yaxis=dict(title="Patrimônio (R$)", showgrid=True, gridcolor=COR_FUNDO_GRID, zeroline=False, color="#444444"),
-        font=dict(family="Arial, sans-serif", size=13, color="#333333"),
-        hoverlabel=dict(bgcolor="#1A1A2E", font_color="#FFFFFF"),
+        xaxis={"title": "Anos", "showgrid": False, "zeroline": False, "color": "#444444"},
+        yaxis={"title": "Patrimônio (R$)", "showgrid": True, "gridcolor": COR_FUNDO_GRID, "zeroline": False, "color": "#444444"},
+        font={"family": "Arial, sans-serif", "size": 13, "color": "#333333"},
+        hoverlabel={"bgcolor": "#1A1A2E", "font_color": "#FFFFFF"},
     )
 
     st.plotly_chart(fig, use_container_width=True, config={"responsive": True, "displayModeBar": False})
 
+idx_5 = min(5, anos_projecao)
+idx_10 = min(10, anos_projecao)
+
 col_x, col_y, col_z = st.columns(3)
-col_x.metric("Patrimônio em 5 anos", f"R$ {valores_anuais[min(5, anos_projecao)]:,.2f}")
-col_y.metric("Patrimônio em 10 anos", f"R$ {valores_anuais[min(10, anos_projecao)]:,.2f}")
+col_x.metric(f"Patrimônio em {idx_5} anos", f"R$ {valores_anuais[idx_5]:,.2f}")
+col_y.metric(f"Patrimônio em {idx_10} anos", f"R$ {valores_anuais[idx_10]:,.2f}")
 col_z.metric(f"Patrimônio em {anos_projecao} anos", f"R$ {valores_anuais[-1]:,.2f}")
 
 # ----------------------------------------------------------------------------
