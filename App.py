@@ -1,32 +1,23 @@
 """
-Dashboard Financeiro Pessoal — Minimalista (com LocalStorage por dispositivo)
-Streamlit + Plotly + Pandas + LocalStorage
-
-Como rodar:
-    pip install streamlit plotly pandas streamlit-local-storage
-    streamlit run app.py
+Dashboard Financeiro Pessoal — Minimalista (com MongoDB Atlas e Autenticação)
+Streamlit + Plotly + Pandas + PyMongo + Bcrypt
 """
 
 from datetime import date
-import json
-import os
-import time
-
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from streamlit_local_storage import LocalStorage
+import pymongo
+import bcrypt
 
 # ----------------------------------------------------------------------------
-# CONFIGURAÇÃO GERAL E ARMAZENAMENTO LOCAL
+# CONFIGURAÇÃO GERAL
 # ----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Dashboard Financeiro",
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-local_store = LocalStorage()
 
 COR_RECEITA = "#2E7D32"
 COR_DESPESA = "#B71C1C"
@@ -86,8 +77,7 @@ CSS = """
         background-color: #FFFFFF !important;
     }
 
-    /* Campo de Valor (R$) maior e mais legivel, para nao ser atrapalhado
-       pelo texto pequeno "Press Enter to submit form" do Streamlit */
+    /* Campo de Valor (R$) */
     section[data-testid="stSidebar"] div[data-testid="stNumberInput"] input {
         font-size: 1.35rem !important;
         font-weight: 600 !important;
@@ -97,7 +87,6 @@ CSS = """
     section[data-testid="stSidebar"] div[data-testid="stNumberInput"] {
         margin-bottom: 0.35rem;
     }
-    /* Dica "Press Enter to submit form" menor e discreta */
     div[data-testid="InputInstructions"] {
         font-size: 0.65rem !important;
         opacity: 0.55;
@@ -175,26 +164,110 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 
 # ----------------------------------------------------------------------------
-# PERSISTÊNCIA DE DADOS (LOCALSTORAGE / NAVEGADOR)
+# CONEXÃO COM O MONGODB ATLAS
+# ----------------------------------------------------------------------------
+@st.cache_resource
+def init_connection():
+    uri = st.secrets["mongo"]["uri"]
+    return pymongo.MongoClient(uri)
+
+client = init_connection()
+db = client["financeiro_db"]
+usuarios_coll = db["usuarios"]
+transacoes_coll = db["transacoes"]
+
+
+# ----------------------------------------------------------------------------
+# FUNÇÕES DE AUTENTICAÇÃO E CRIPTOGRAFIA
+# ----------------------------------------------------------------------------
+def gerar_hash(senha: str) -> str:
+    return bcrypt.hashpw(senha.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verificar_senha(senha: str, hash_salvo: str) -> bool:
+    return bcrypt.checkpw(senha.encode('utf-8'), hash_salvo.encode('utf-8'))
+
+def criar_usuario(email: str, senha: str) -> bool:
+    email = email.strip().lower()
+    if usuarios_coll.find_one({"email": email}):
+        return False
+    
+    hash_senha = gerar_hash(senha)
+    usuarios_coll.insert_one({"email": email, "senha": hash_senha})
+    return True
+
+def autenticar_usuario(email: str, senha: str) -> bool:
+    email = email.strip().lower()
+    user = usuarios_coll.find_one({"email": email})
+    if user and verificar_senha(senha, user["senha"]):
+        return True
+    return False
+
+
+# ----------------------------------------------------------------------------
+# GERENCIAMENTO DE SESSÃO E TELA DE LOGIN
+# ----------------------------------------------------------------------------
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+    st.session_state.usuario_email = ""
+
+if not st.session_state.autenticado:
+    st.title("Dashboard Financeiro")
+    st.caption("Acesse sua conta para gerenciar suas finanças.")
+
+    col_login, _ = st.columns([1, 1])
+    with col_login:
+        tab_entrar, tab_cadastrar = st.tabs(["Entrar", "Criar Conta"])
+
+        with tab_entrar:
+            with st.form("form_login"):
+                email = st.text_input("E-mail")
+                senha = st.text_input("Senha", type="password")
+                btn_login = st.form_submit_button("Entrar", use_container_width=True)
+
+                if btn_login:
+                    if autenticar_usuario(email, senha):
+                        st.session_state.autenticado = True
+                        st.session_state.usuario_email = email.strip().lower()
+                        st.success("Login realizado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.error("E-mail ou senha incorretos.")
+
+        with tab_cadastrar:
+            with st.form("form_cadastro"):
+                novo_email = st.text_input("E-mail para cadastro")
+                nova_senha = st.text_input("Escolha uma senha", type="password")
+                btn_cadastrar = st.form_submit_button("Cadastrar", use_container_width=True)
+
+                if btn_cadastrar:
+                    if not novo_email.strip() or not nova_senha.strip():
+                        st.warning("Preencha todos os campos.")
+                    elif criar_usuario(novo_email, nova_senha):
+                        st.success("Conta criada! Você já pode fazer login.")
+                    else:
+                        st.error("Este e-mail já está cadastrado.")
+
+    st.markdown('<div class="rodape-app">Feito por Will Smolarek</div>', unsafe_allow_html=True)
+    st.stop()
+
+
+# ----------------------------------------------------------------------------
+# FUNÇÕES DO BANCO DE DADOS (TRANSAÇÕES DO USUÁRIO LOGADO)
 # ----------------------------------------------------------------------------
 colunas = ["Data", "Tipo", "Descrição", "Valor"]
 
 def carregar_dados() -> pd.DataFrame:
-    raw_data = local_store.getItem("transacoes_locais")
-
-    if raw_data:
-        try:
-            dados = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
-            df = pd.DataFrame(dados)
-            if not df.empty:
-                df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-                df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
-                for c in colunas:
-                    if c not in df.columns:
-                        df[c] = None
-                return df[colunas]
-        except Exception:
-            pass
+    query = {"usuario": st.session_state.usuario_email}
+    docs = list(transacoes_coll.find(query, {"_id": 0, "usuario": 0}))
+    
+    if docs:
+        df = pd.DataFrame(docs)
+        df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+        df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+        for c in colunas:
+            if c not in df.columns:
+                df[c] = None
+        return df[colunas]
 
     df = pd.DataFrame(columns=colunas)
     df["Data"] = pd.to_datetime(df["Data"])
@@ -203,39 +276,33 @@ def carregar_dados() -> pd.DataFrame:
 
 
 def salvar_dados(df: pd.DataFrame) -> None:
-    df_salvar = df.copy()
-    if not df_salvar.empty:
+    email = st.session_state.usuario_email
+    transacoes_coll.delete_many({"usuario": email})
+    
+    if not df.empty:
+        df_salvar = df.copy()
         df_salvar["Data"] = pd.to_datetime(df_salvar["Data"]).dt.strftime("%Y-%m-%d")
-        local_store.setItem("transacoes_locais", json.dumps(df_salvar.to_dict(orient="records")))
-    else:
-        local_store.setItem("transacoes_locais", json.dumps([]))
+        df_salvar["usuario"] = email
+        registros = df_salvar.to_dict(orient="records")
+        transacoes_coll.insert_many(registros)
 
-
-# O componente do streamlit-local-storage busca os dados do navegador de forma
-# assíncrona: na primeira execução do script (ex: logo após um F5), o valor
-# retornado ainda pode ser o "default" vazio, porque o JS do navegador não
-# teve tempo de responder. Se carregarmos a tabela nesse instante, ela vem
-# vazia e o app "esquece" os lançamentos até que algo mais force uma releitura.
-# Por isso, sincronizamos explicitamente uma vez por sessão, dando um pequeno
-# tempo para o componente responder e então recarregando os dados.
-if "ls_sincronizado" not in st.session_state:
-    st.session_state.ls_sincronizado = False
-
-if not st.session_state.ls_sincronizado:
-    time.sleep(0.3)
-    local_store.refreshItems()
-    st.session_state.transacoes = carregar_dados()
-    st.session_state.ls_sincronizado = True
-    st.rerun()
 
 if "transacoes" not in st.session_state:
     st.session_state.transacoes = carregar_dados()
 
 
 # ----------------------------------------------------------------------------
-# SIDEBAR — LANÇAMENTO RÁPIDO
+# SIDEBAR — LANÇAMENTO RÁPIDO & USUÁRIO
 # ----------------------------------------------------------------------------
 with st.sidebar:
+    st.markdown(f"👤 **{st.session_state.usuario_email}**")
+    if st.button("Sair da Conta", use_container_width=True):
+        st.session_state.autenticado = False
+        st.session_state.usuario_email = ""
+        st.session_state.pop("transacoes", None)
+        st.rerun()
+
+    st.divider()
     st.markdown("### Novo Lançamento")
 
     with st.form("form_transacao", clear_on_submit=True):
