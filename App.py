@@ -10,6 +10,7 @@ Como rodar:
 from datetime import date
 import json
 import os
+import time
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -83,6 +84,23 @@ CSS = """
         box-shadow: 0 0 0 1px #37474F !important;
         color: #1A1A2E !important;
         background-color: #FFFFFF !important;
+    }
+
+    /* Campo de Valor (R$) maior e mais legivel, para nao ser atrapalhado
+       pelo texto pequeno "Press Enter to submit form" do Streamlit */
+    section[data-testid="stSidebar"] div[data-testid="stNumberInput"] input {
+        font-size: 1.35rem !important;
+        font-weight: 600 !important;
+        height: 3rem !important;
+        padding: 0.4rem 0.75rem !important;
+    }
+    section[data-testid="stSidebar"] div[data-testid="stNumberInput"] {
+        margin-bottom: 0.35rem;
+    }
+    /* Dica "Press Enter to submit form" menor e discreta */
+    div[data-testid="InputInstructions"] {
+        font-size: 0.65rem !important;
+        opacity: 0.55;
     }
 
     section[data-testid="stSidebar"] button[data-testid="stNumberInputStepUp"],
@@ -163,7 +181,7 @@ colunas = ["Data", "Tipo", "Descrição", "Valor"]
 
 def carregar_dados() -> pd.DataFrame:
     raw_data = local_store.getItem("transacoes_locais")
-    
+
     if raw_data:
         try:
             dados = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
@@ -192,6 +210,23 @@ def salvar_dados(df: pd.DataFrame) -> None:
     else:
         local_store.setItem("transacoes_locais", json.dumps([]))
 
+
+# O componente do streamlit-local-storage busca os dados do navegador de forma
+# assíncrona: na primeira execução do script (ex: logo após um F5), o valor
+# retornado ainda pode ser o "default" vazio, porque o JS do navegador não
+# teve tempo de responder. Se carregarmos a tabela nesse instante, ela vem
+# vazia e o app "esquece" os lançamentos até que algo mais force uma releitura.
+# Por isso, sincronizamos explicitamente uma vez por sessão, dando um pequeno
+# tempo para o componente responder e então recarregando os dados.
+if "ls_sincronizado" not in st.session_state:
+    st.session_state.ls_sincronizado = False
+
+if not st.session_state.ls_sincronizado:
+    time.sleep(0.3)
+    local_store.refreshItems()
+    st.session_state.transacoes = carregar_dados()
+    st.session_state.ls_sincronizado = True
+    st.rerun()
 
 if "transacoes" not in st.session_state:
     st.session_state.transacoes = carregar_dados()
