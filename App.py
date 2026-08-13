@@ -41,6 +41,12 @@ CSS = """
         max-width: 1200px;
     }
 
+    /* Centralização dos títulos do login */
+    .login-header {
+        text-align: center;
+        margin-bottom: 1.5rem;
+    }
+
     /* Cards de KPI */
     div[data-testid="stMetric"] {
         background-color: #F5F5F7;
@@ -69,38 +75,6 @@ CSS = """
         border: 1px solid #D0D0D0 !important;
         border-radius: 6px !important;
     }
-    section[data-testid="stSidebar"] input:focus,
-    section[data-testid="stSidebar"] textarea:focus {
-        border: 1px solid #37474F !important;
-        box-shadow: 0 0 0 1px #37474F !important;
-        color: #1A1A2E !important;
-        background-color: #FFFFFF !important;
-    }
-
-    /* Campo de Valor (R$) */
-    section[data-testid="stSidebar"] div[data-testid="stNumberInput"] input {
-        font-size: 1.35rem !important;
-        font-weight: 600 !important;
-        height: 3rem !important;
-        padding: 0.4rem 0.75rem !important;
-    }
-    section[data-testid="stSidebar"] div[data-testid="stNumberInput"] {
-        margin-bottom: 0.35rem;
-    }
-    div[data-testid="InputInstructions"] {
-        font-size: 0.65rem !important;
-        opacity: 0.55;
-    }
-
-    section[data-testid="stSidebar"] button[data-testid="stNumberInputStepUp"],
-    section[data-testid="stSidebar"] button[data-testid="stNumberInputStepDown"] {
-        background-color: #FFFFFF !important;
-        border: 1px solid #D0D0D0 !important;
-    }
-    section[data-testid="stSidebar"] button[data-testid="stNumberInputStepUp"] svg,
-    section[data-testid="stSidebar"] button[data-testid="stNumberInputStepDown"] svg { fill: #1A1A2E !important; }
-
-    div[data-baseweb="select"] > div { background-color: #FFFFFF !important; color: #1A1A2E !important; border: 1px solid #D0D0D0 !important; }
 
     /* Botões */
     .stButton > button,
@@ -129,7 +103,6 @@ CSS = """
         color: #FFFFFF !important;
     }
 
-    section[data-testid="stSidebar"] div[role="radiogroup"] label { color: #1A1A2E !important; }
     div[data-testid="stDataFrame"] { border: 1px solid #E0E0E0; border-radius: 8px; }
     hr { border-color: #EAEAEA; }
 
@@ -145,18 +118,8 @@ CSS = """
         .block-container { padding-left: 1rem; padding-right: 1rem; padding-top: 1.2rem; }
         div[data-testid="stMetric"] { padding: 14px 16px; }
         div[data-testid="stMetricValue"] { font-size: 1.2rem; }
-        div[data-testid="stMetricLabel"] { font-size: 0.78rem; }
         h1 { font-size: 1.5rem !important; }
-        h3 { font-size: 1.1rem !important; }
         div[data-testid="column"] { min-width: 100% !important; flex: 1 1 100% !important; }
-        div[data-testid="stDataFrame"] { font-size: 0.85rem; }
-    }
-
-    @media (max-width: 480px) {
-        .block-container { padding-left: 0.6rem; padding-right: 0.6rem; }
-        h1 { font-size: 1.25rem !important; }
-        div[data-testid="stMetricValue"] { font-size: 1.05rem; }
-        .stButton > button, .stFormSubmitButton > button { font-size: 0.9rem; padding: 0.5rem 0.75rem; }
     }
 </style>
 """
@@ -186,36 +149,66 @@ def gerar_hash(senha: str) -> str:
 def verificar_senha(senha: str, hash_salvo: str) -> bool:
     return bcrypt.checkpw(senha.encode('utf-8'), hash_salvo.encode('utf-8'))
 
-def criar_usuario(email: str, senha: str) -> bool:
+def criar_usuario(nome: str, cpf: str, data_nascimento: str, email: str, senha: str) -> tuple[bool, str]:
     email = email.strip().lower()
+    cpf = cpf.strip()
+    
     if usuarios_coll.find_one({"email": email}):
-        return False
+        return False, "Este e-mail já está cadastrado."
+    if usuarios_coll.find_one({"cpf": cpf}):
+        return False, "Este CPF já está cadastrado."
     
     hash_senha = gerar_hash(senha)
-    usuarios_coll.insert_one({"email": email, "senha": hash_senha})
-    return True
+    usuarios_coll.insert_one({
+        "nome": nome.strip(),
+        "cpf": cpf,
+        "data_nascimento": data_nascimento,
+        "email": email,
+        "senha": hash_senha
+    })
+    return True, "Conta criada com sucesso!"
 
-def autenticar_usuario(email: str, senha: str) -> bool:
+def autenticar_usuario(email: str, senha: str):
     email = email.strip().lower()
     user = usuarios_coll.find_one({"email": email})
     if user and verificar_senha(senha, user["senha"]):
-        return True
-    return False
+        return user
+    return None
 
 
 # ----------------------------------------------------------------------------
-# GERENCIAMENTO DE SESSÃO E TELA DE LOGIN
+# GERENCIAMENTO DE SESSÃO E PERSISTÊNCIA DE LOGIN (st.query_params)
 # ----------------------------------------------------------------------------
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
     st.session_state.usuario_email = ""
+    st.session_state.usuario_nome = ""
 
+# Verificar se existe sessão salva nos parâmetros da URL (evita deslogar no F5)
+if not st.session_state.autenticado and "session_email" in st.query_params:
+    email_salvo = st.query_params["session_email"]
+    user_data = usuarios_coll.find_one({"email": email_salvo})
+    if user_data:
+        st.session_state.autenticado = True
+        st.session_state.usuario_email = email_salvo
+        st.session_state.usuario_nome = user_data.get("nome", email_salvo)
+
+
+# ----------------------------------------------------------------------------
+# TELA DE LOGIN / CADASTRO CENTRALIZADA
+# ----------------------------------------------------------------------------
 if not st.session_state.autenticado:
-    st.title("Dashboard Financeiro")
-    st.caption("Acesse sua conta para gerenciar suas finanças.")
+    # Centraliza o painel usando colunas [esquerda, centro, direita]
+    _, col_central, _ = st.columns([1, 1.8, 1])
 
-    col_login, _ = st.columns([1, 1])
-    with col_login:
+    with col_central:
+        st.markdown("""
+            <div class="login-header">
+                <h1>Dashboard Financeiro</h1>
+                <p>Acesse sua conta para gerenciar suas finanças.</p>
+            </div>
+        """, unsafe_allow_html=True)
+
         tab_entrar, tab_cadastrar = st.tabs(["Entrar", "Criar Conta"])
 
         with tab_entrar:
@@ -225,9 +218,12 @@ if not st.session_state.autenticado:
                 btn_login = st.form_submit_button("Entrar", use_container_width=True)
 
                 if btn_login:
-                    if autenticar_usuario(email, senha):
+                    user_data = autenticar_usuario(email, senha)
+                    if user_data:
                         st.session_state.autenticado = True
                         st.session_state.usuario_email = email.strip().lower()
+                        st.session_state.usuario_nome = user_data.get("nome", email)
+                        st.query_params["session_email"] = email.strip().lower()
                         st.success("Login realizado com sucesso!")
                         st.rerun()
                     else:
@@ -235,24 +231,41 @@ if not st.session_state.autenticado:
 
         with tab_cadastrar:
             with st.form("form_cadastro"):
-                novo_email = st.text_input("E-mail para cadastro")
-                nova_senha = st.text_input("Escolha uma senha", type="password")
+                novo_nome = st.text_input("Nome Completo")
+                novo_cpf = st.text_input("CPF (somente números)", max_chars=14)
+                nova_data_nasc = st.date_input("Data de Nascimento", value=date(2000, 1, 1))
+                novo_email = st.text_input("E-mail")
+                nova_senha = st.text_input("Senha", type="password")
+                confirma_senha = st.text_input("Confirmar Senha", type="password")
+
                 btn_cadastrar = st.form_submit_button("Cadastrar", use_container_width=True)
 
                 if btn_cadastrar:
-                    if not novo_email.strip() or not nova_senha.strip():
-                        st.warning("Preencha todos os campos.")
-                    elif criar_usuario(novo_email, nova_senha):
-                        st.success("Conta criada! Você já pode fazer login.")
+                    if not novo_nome.strip() or not novo_cpf.strip() or not novo_email.strip() or not nova_senha.strip():
+                        st.warning("Preencha todos os campos obrigatórios.")
+                    elif nova_senha != confirma_senha:
+                        st.error("As senhas não coincidem. Digite novamente.")
+                    elif len(nova_senha) < 6:
+                        st.warning("A senha deve ter pelo menos 6 caracteres.")
                     else:
-                        st.error("Este e-mail já está cadastrado.")
+                        sucesso, msg = criar_usuario(
+                            novo_nome, 
+                            novo_cpf, 
+                            str(nova_data_nasc), 
+                            novo_email, 
+                            nova_senha
+                        )
+                        if sucesso:
+                            st.success(msg + " Você já pode fazer login na aba 'Entrar'.")
+                        else:
+                            st.error(msg)
 
     st.markdown('<div class="rodape-app">Feito por Will Smolarek</div>', unsafe_allow_html=True)
     st.stop()
 
 
 # ----------------------------------------------------------------------------
-# FUNÇÕES DO BANCO DE DADOS (TRANSAÇÕES DO USUÁRIO LOGADO)
+# FUNÇÕES DO BANCO DE DADOS (TRANSAÇÕES)
 # ----------------------------------------------------------------------------
 colunas = ["Data", "Tipo", "Descrição", "Valor"]
 
@@ -274,7 +287,6 @@ def carregar_dados() -> pd.DataFrame:
     df["Valor"] = pd.to_numeric(df["Valor"])
     return df
 
-
 def salvar_dados(df: pd.DataFrame) -> None:
     email = st.session_state.usuario_email
     transacoes_coll.delete_many({"usuario": email})
@@ -286,20 +298,24 @@ def salvar_dados(df: pd.DataFrame) -> None:
         registros = df_salvar.to_dict(orient="records")
         transacoes_coll.insert_many(registros)
 
-
 if "transacoes" not in st.session_state:
     st.session_state.transacoes = carregar_dados()
 
 
 # ----------------------------------------------------------------------------
-# SIDEBAR — LANÇAMENTO RÁPIDO & USUÁRIO
+# SIDEBAR — PERFIL E LANÇAMENTOS
 # ----------------------------------------------------------------------------
 with st.sidebar:
-    st.markdown(f"👤 **{st.session_state.usuario_email}**")
+    st.markdown(f"👤 **{st.session_state.usuario_nome}**")
+    st.caption(f"E-mail: {st.session_state.usuario_email}")
+    
     if st.button("Sair da Conta", use_container_width=True):
         st.session_state.autenticado = False
         st.session_state.usuario_email = ""
+        st.session_state.usuario_nome = ""
         st.session_state.pop("transacoes", None)
+        if "session_email" in st.query_params:
+            del st.query_params["session_email"]
         st.rerun()
 
     st.divider()
@@ -342,16 +358,13 @@ with st.sidebar:
 
 
 # ----------------------------------------------------------------------------
-# CÁLCULOS E FILTROS PRINCIPAIS
+# PAINEL PRINCIPAL & KPIS
 # ----------------------------------------------------------------------------
 df = st.session_state.transacoes.copy()
 
 if not df.empty:
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
-# ----------------------------------------------------------------------------
-# CABEÇALHO + KPIs COM FILTRO DE PERÍODO
-# ----------------------------------------------------------------------------
 st.title("Dashboard Financeiro Pessoal")
 st.caption("Visão geral simples e objetiva das suas finanças.")
 
@@ -398,7 +411,7 @@ st.divider()
 
 
 # ----------------------------------------------------------------------------
-# HISTÓRICO DE TRANSAÇÕES (EDIÇÃO E EXCLUSÃO)
+# HISTÓRICO DE TRANSAÇÕES
 # ----------------------------------------------------------------------------
 st.subheader("Histórico de Transações")
 
