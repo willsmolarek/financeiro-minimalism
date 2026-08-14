@@ -1,8 +1,3 @@
-"""
-Dashboard Financeiro Pessoal — Minimalista (com MongoDB Atlas e Autenticação)
-Streamlit + Plotly + Pandas + PyMongo + Bcrypt
-"""
-
 from datetime import date
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,26 +5,16 @@ import streamlit as st
 import pymongo
 import bcrypt
 
-# ----------------------------------------------------------------------------
-# CONFIGURAÇÃO GERAL
-# ----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Dashboard Financeiro",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-COR_RECEITA = "#2E7D32"
-COR_DESPESA = "#B71C1C"
-COR_SALDO = "#1A1A2E"
-COR_LINHA = "#37474F"
-COR_FUNDO_GRID = "#E0E0E0"
-
+# Estilização do app
 CSS = """
 <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-
+    #MainMenu, footer { visibility: hidden; }
     button[data-testid="stSidebarNavSeparator"] { display: none; }
     [data-testid="stHeader"] { background-color: transparent !important; }
     [data-testid="stSidebarCollapseButton"] { color: #1A1A2E !important; }
@@ -41,7 +26,6 @@ CSS = """
         max-width: 1200px;
     }
 
-    /* Centralização dos títulos do login */
     .login-header {
         text-align: center;
         margin-bottom: 1.5rem;
@@ -126,30 +110,25 @@ CSS = """
 st.markdown(CSS, unsafe_allow_html=True)
 
 
-# ----------------------------------------------------------------------------
-# CONEXÃO COM O MONGODB ATLAS
-# ----------------------------------------------------------------------------
+# Conexão MongoDB Atlas
 @st.cache_resource
-def init_connection():
-    uri = st.secrets["mongo"]["uri"]
-    return pymongo.MongoClient(uri)
+def get_db_client():
+    return pymongo.MongoClient(st.secrets["mongo"]["uri"])
 
-client = init_connection()
+client = get_db_client()
 db = client["financeiro_db"]
 usuarios_coll = db["usuarios"]
 transacoes_coll = db["transacoes"]
 
 
-# ----------------------------------------------------------------------------
-# FUNÇÕES DE AUTENTICAÇÃO E CRIPTOGRAFIA
-# ----------------------------------------------------------------------------
+# Auxiliares de Auth
 def gerar_hash(senha: str) -> str:
     return bcrypt.hashpw(senha.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def verificar_senha(senha: str, hash_salvo: str) -> bool:
     return bcrypt.checkpw(senha.encode('utf-8'), hash_salvo.encode('utf-8'))
 
-def criar_usuario(nome: str, cpf: str, data_nascimento: str, email: str, senha: str) -> tuple[bool, str]:
+def criar_usuario(nome: str, cpf: str, data_nasc: str, email: str, senha: str) -> tuple[bool, str]:
     email = email.strip().lower()
     cpf = cpf.strip()
     
@@ -158,13 +137,12 @@ def criar_usuario(nome: str, cpf: str, data_nascimento: str, email: str, senha: 
     if usuarios_coll.find_one({"cpf": cpf}):
         return False, "Este CPF já está cadastrado."
     
-    hash_senha = gerar_hash(senha)
     usuarios_coll.insert_one({
         "nome": nome.strip(),
         "cpf": cpf,
-        "data_nascimento": data_nascimento,
+        "data_nascimento": data_nasc,
         "email": email,
-        "senha": hash_senha
+        "senha": gerar_hash(senha)
     })
     return True, "Conta criada com sucesso!"
 
@@ -176,29 +154,24 @@ def autenticar_usuario(email: str, senha: str):
     return None
 
 
-# ----------------------------------------------------------------------------
-# GERENCIAMENTO DE SESSÃO E PERSISTÊNCIA DE LOGIN (st.query_params)
-# ----------------------------------------------------------------------------
+# Controle de Sessão
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
     st.session_state.usuario_email = ""
     st.session_state.usuario_nome = ""
 
-# Verificar se existe sessão salva nos parâmetros da URL (evita deslogar no F5)
+# Manter login no F5 via query params
 if not st.session_state.autenticado and "session_email" in st.query_params:
     email_salvo = st.query_params["session_email"]
-    user_data = usuarios_coll.find_one({"email": email_salvo})
-    if user_data:
+    user = usuarios_coll.find_one({"email": email_salvo})
+    if user:
         st.session_state.autenticado = True
         st.session_state.usuario_email = email_salvo
-        st.session_state.usuario_nome = user_data.get("nome", email_salvo)
+        st.session_state.usuario_nome = user.get("nome", email_salvo)
 
 
-# ----------------------------------------------------------------------------
-# TELA DE LOGIN / CADASTRO CENTRALIZADA
-# ----------------------------------------------------------------------------
+# Flow de Login / Cadastro
 if not st.session_state.autenticado:
-    # Centraliza o painel usando colunas [esquerda, centro, direita]
     _, col_central, _ = st.columns([1, 1.8, 1])
 
     with col_central:
@@ -215,14 +188,13 @@ if not st.session_state.autenticado:
             with st.form("form_login"):
                 email = st.text_input("E-mail")
                 senha = st.text_input("Senha", type="password")
-                btn_login = st.form_submit_button("Entrar", use_container_width=True)
-
-                if btn_login:
-                    user_data = autenticar_usuario(email, senha)
-                    if user_data:
+                
+                if st.form_submit_button("Entrar", use_container_width=True):
+                    user = autenticar_usuario(email, senha)
+                    if user:
                         st.session_state.autenticado = True
                         st.session_state.usuario_email = email.strip().lower()
-                        st.session_state.usuario_nome = user_data.get("nome", email)
+                        st.session_state.usuario_nome = user.get("nome", email)
                         st.query_params["session_email"] = email.strip().lower()
                         st.success("Login realizado com sucesso!")
                         st.rerun()
@@ -238,25 +210,17 @@ if not st.session_state.autenticado:
                 nova_senha = st.text_input("Senha", type="password")
                 confirma_senha = st.text_input("Confirmar Senha", type="password")
 
-                btn_cadastrar = st.form_submit_button("Cadastrar", use_container_width=True)
-
-                if btn_cadastrar:
-                    if not novo_nome.strip() or not novo_cpf.strip() or not novo_email.strip() or not nova_senha.strip():
+                if st.form_submit_button("Cadastrar", use_container_width=True):
+                    if not all([novo_nome.strip(), novo_cpf.strip(), novo_email.strip(), nova_senha.strip()]):
                         st.warning("Preencha todos os campos obrigatórios.")
                     elif nova_senha != confirma_senha:
                         st.error("As senhas não coincidem. Digite novamente.")
                     elif len(nova_senha) < 6:
                         st.warning("A senha deve ter pelo menos 6 caracteres.")
                     else:
-                        sucesso, msg = criar_usuario(
-                            novo_nome, 
-                            novo_cpf, 
-                            str(nova_data_nasc), 
-                            novo_email, 
-                            nova_senha
-                        )
-                        if sucesso:
-                            st.success(msg + " Você já pode fazer login na aba 'Entrar'.")
+                        ok, msg = criar_usuario(novo_nome, novo_cpf, str(nova_data_nasc), novo_email, nova_senha)
+                        if ok:
+                            st.success(f"{msg} Você já pode fazer login na aba 'Entrar'.")
                         else:
                             st.error(msg)
 
@@ -264,10 +228,8 @@ if not st.session_state.autenticado:
     st.stop()
 
 
-# ----------------------------------------------------------------------------
-# FUNÇÕES DO BANCO DE DADOS (TRANSAÇÕES)
-# ----------------------------------------------------------------------------
-colunas = ["Data", "Tipo", "Descrição", "Valor"]
+# Gerenciamento de Transações
+COLUNAS = ["Data", "Tipo", "Descrição", "Valor"]
 
 def carregar_dados() -> pd.DataFrame:
     query = {"usuario": st.session_state.usuario_email}
@@ -277,12 +239,12 @@ def carregar_dados() -> pd.DataFrame:
         df = pd.DataFrame(docs)
         df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
         df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
-        for c in colunas:
-            if c not in df.columns:
-                df[c] = None
-        return df[colunas]
+        for col in COLUNAS:
+            if col not in df.columns:
+                df[col] = None
+        return df[COLUNAS]
 
-    df = pd.DataFrame(columns=colunas)
+    df = pd.DataFrame(columns=COLUNAS)
     df["Data"] = pd.to_datetime(df["Data"])
     df["Valor"] = pd.to_numeric(df["Valor"])
     return df
@@ -295,16 +257,13 @@ def salvar_dados(df: pd.DataFrame) -> None:
         df_salvar = df.copy()
         df_salvar["Data"] = pd.to_datetime(df_salvar["Data"]).dt.strftime("%Y-%m-%d")
         df_salvar["usuario"] = email
-        registros = df_salvar.to_dict(orient="records")
-        transacoes_coll.insert_many(registros)
+        transacoes_coll.insert_many(df_salvar.to_dict(orient="records"))
 
 if "transacoes" not in st.session_state:
     st.session_state.transacoes = carregar_dados()
 
 
-# ----------------------------------------------------------------------------
-# SIDEBAR — PERFIL E LANÇAMENTOS
-# ----------------------------------------------------------------------------
+# Sidebar (Perfil e Novo Lançamento)
 with st.sidebar:
     st.markdown(f"👤 **{st.session_state.usuario_nome}**")
     st.caption(f"E-mail: {st.session_state.usuario_email}")
@@ -327,21 +286,19 @@ with st.sidebar:
         descricao = st.text_input("Descrição", placeholder="Ex: Salário, Aluguel...")
         data_transacao = st.date_input("Data", value=date.today())
 
-        enviado = st.form_submit_button("Adicionar", use_container_width=True)
-
-        if enviado:
+        if st.form_submit_button("Adicionar", use_container_width=True):
             if valor <= 0:
                 st.warning("Informe um valor maior que zero.")
             elif not descricao.strip():
                 st.warning("Informe uma descrição.")
             else:
-                nova = pd.DataFrame([{
+                nova_linha = pd.DataFrame([{
                     "Data": pd.to_datetime(data_transacao),
                     "Tipo": tipo,
                     "Descrição": descricao.strip(),
-                    "Valor": valor,
+                    "Valor": valor
                 }])
-                st.session_state.transacoes = pd.concat([st.session_state.transacoes, nova], ignore_index=True)
+                st.session_state.transacoes = pd.concat([st.session_state.transacoes, nova_linha], ignore_index=True)
                 salvar_dados(st.session_state.transacoes)
                 st.success("Lançamento adicionado!")
                 st.rerun()
@@ -350,18 +307,15 @@ with st.sidebar:
 
     if not st.session_state.transacoes.empty:
         if st.button("Limpar todo o histórico", use_container_width=True):
-            df_vazio = pd.DataFrame(columns=colunas)
+            df_vazio = pd.DataFrame(columns=COLUNAS)
             df_vazio["Data"] = pd.to_datetime(df_vazio["Data"])
             st.session_state.transacoes = df_vazio
             salvar_dados(df_vazio)
             st.rerun()
 
 
-# ----------------------------------------------------------------------------
-# PAINEL PRINCIPAL & KPIS
-# ----------------------------------------------------------------------------
+# Painel Principal
 df = st.session_state.transacoes.copy()
-
 if not df.empty:
     df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
 
@@ -403,16 +357,13 @@ col1.metric("Total de Recebimentos", f"R$ {total_receitas:,.2f}")
 col2.metric("Total de Gastos", f"R$ {total_despesas:,.2f}")
 col3.metric(
     "Saldo no Período" if periodo != "Total" else "Saldo Atual Disponível",
-    f"R$ {saldo_periodo:,.2f}",
-    delta=None,
+    f"R$ {saldo_periodo:,.2f}"
 )
 
 st.divider()
 
 
-# ----------------------------------------------------------------------------
-# HISTÓRICO DE TRANSAÇÕES
-# ----------------------------------------------------------------------------
+# Tabela de Transações
 st.subheader("Histórico de Transações")
 
 if df.empty:
@@ -442,7 +393,7 @@ else:
     )
 
     if st.button("Salvar Alterações", use_container_width=True):
-        df_salvar = df_editado[df_editado["Excluir"] == False].drop(columns=["Excluir"])
+        df_salvar = df_editado[~df_editado["Excluir"]].drop(columns=["Excluir"])
         df_salvar["Data"] = pd.to_datetime(df_salvar["Data"])
 
         st.session_state.transacoes = df_salvar
@@ -454,9 +405,7 @@ else:
 st.divider()
 
 
-# ----------------------------------------------------------------------------
-# PROJEÇÃO FINANCEIRA
-# ----------------------------------------------------------------------------
+# Projeções e Juros Compostos
 st.subheader("Projeção Financeira")
 
 col_a, col_b = st.columns([1, 2])
@@ -467,7 +416,7 @@ with col_a:
         min_value=0.0,
         value=500.0,
         step=50.0,
-        format="%.2f",
+        format="%.2f"
     )
     anos_projecao = st.slider("Anos de projeção", min_value=1, max_value=30, value=30)
     taxa_mensal = 0.01
@@ -492,7 +441,7 @@ with col_b:
             x=anos_eixo,
             y=valores_anuais,
             mode="lines",
-            line={"color": COR_LINHA, "width": 3},
+            line={"color": "#37474F", "width": 3},
             fill="tozeroy",
             fillcolor="rgba(55, 71, 79, 0.08)",
             hovertemplate="Ano %{x}<br>Patrimônio: R$ %{y:,.2f}<extra></extra>",
@@ -506,7 +455,7 @@ with col_b:
         plot_bgcolor="#FFFFFF",
         paper_bgcolor="#FFFFFF",
         xaxis={"title": "Anos", "showgrid": False, "zeroline": False, "color": "#444444"},
-        yaxis={"title": "Patrimônio (R$)", "showgrid": True, "gridcolor": COR_FUNDO_GRID, "zeroline": False, "color": "#444444"},
+        yaxis={"title": "Patrimônio (R$)", "showgrid": True, "gridcolor": "#E0E0E0", "zeroline": False, "color": "#444444"},
         font={"family": "Arial, sans-serif", "size": 13, "color": "#333333"},
         hoverlabel={"bgcolor": "#1A1A2E", "font_color": "#FFFFFF"},
     )
@@ -521,7 +470,4 @@ col_x.metric(f"Patrimônio em {idx_5} anos", f"R$ {valores_anuais[idx_5]:,.2f}")
 col_y.metric(f"Patrimônio em {idx_10} anos", f"R$ {valores_anuais[idx_10]:,.2f}")
 col_z.metric(f"Patrimônio em {anos_projecao} anos", f"R$ {valores_anuais[-1]:,.2f}")
 
-# ----------------------------------------------------------------------------
-# RODAPÉ
-# ----------------------------------------------------------------------------
 st.markdown('<div class="rodape-app">Feito por Will Smolarek</div>', unsafe_allow_html=True)
